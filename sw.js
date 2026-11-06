@@ -1,10 +1,11 @@
 // Service worker: makes Pocket open instantly and work without a connection.
 // Bump CACHE when you change any file so phones pick up the new version.
-const CACHE = 'pocket-1.0.0';
+const CACHE = 'pocket-1.1.0';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
+  'recipes.js',
   'app.js',
   'manifest.webmanifest',
   'icons/icon.svg',

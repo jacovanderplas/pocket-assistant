@@ -13,6 +13,7 @@
   --shop: #2f7a5f;
   --todo: #2d5fa8;
   --cal: #b4561c;
+  --cook: #8b47a3;
   --shadow: 0 1px 2px rgba(20, 20, 20, .05), 0 6px 18px rgba(20, 20, 20, .05);
   --radius: 14px;
   --tabbar-h: 62px;
@@ -35,6 +36,7 @@
     --shop: #63b69d;
     --todo: #86aef0;
     --cal: #eaa16c;
+    --cook: #d3a3e8;
     --shadow: 0 1px 2px rgba(0, 0, 0, .3);
   }
 }
@@ -45,6 +47,7 @@ body[data-tab="calendar"] { --c: var(--cal); }
 .c-shop { --c: var(--shop); }
 .c-todo { --c: var(--todo); }
 .c-cal  { --c: var(--cal); }
+.c-cook { --c: var(--cook); }
 
 html { -webkit-text-size-adjust: 100%; }
 body {
@@ -145,6 +148,8 @@ main { padding: 6px 16px calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 10
 .appt-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; border-left: 3px solid var(--cal); padding-left: 12px; }
 .appt.past .appt-body { border-left-color: var(--line); }
 .appt.past .row-title { color: var(--muted); }
+.appt.cook .appt-body { border-left-color: var(--cook); }
+.cook-ico { width: 16px; height: 16px; vertical-align: -2px; margin-right: 6px; color: var(--cook); }
 
 /* ---------- today ---------- */
 .card-head { display: flex; align-items: center; justify-content: space-between; width: 100%; padding: 14px 16px 8px; text-align: left; gap: 8px; }
@@ -255,7 +260,42 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
   display: flex; align-items: center; gap: 12px; text-align: left;
   min-height: 56px; padding: 0 16px; border-radius: 12px; background: var(--bg); font-weight: 600;
 }
-.choose .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.choose .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); flex: none; }
+.choose small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
+
+/* ---------- cooking ---------- */
+.sheet-body-inner { display: grid; gap: 14px; }
+.sheet-body-inner:empty { display: none; }
+.recipe-card { display: grid; gap: 12px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--c) 9%, var(--bg)); }
+.recipe-kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
+.recipe-name { margin: 2px 0 2px; font-size: 22px; line-height: 1.2; letter-spacing: -.01em; }
+.recipe-actions { display: grid; gap: 8px; }
+.recipe-actions .btn { background: var(--surface); border: 1px solid var(--line); }
+.select-wrap select {
+  width: 100%; min-height: 48px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 600;
+}
+.stepper { display: inline-flex; align-items: center; width: max-content; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
+.stepper button { width: 48px; height: 44px; font-size: 22px; color: var(--c); }
+.stepper button:active { background: var(--surface-2); }
+.stepper output { min-width: 34px; text-align: center; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ings { margin: 0; padding: 2px 0; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.ings legend { margin-left: 8px; padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.ing { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 8px 14px; }
+.ing + .ing { border-top: 1px solid var(--line); }
+.ing input, .toggle input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--c); }
+.ing-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ing-name small { margin-left: 6px; font-size: 12px; font-weight: 600; color: var(--c); white-space: nowrap; }
+.ing-amt { color: var(--muted); font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.ing:has(input:not(:checked)) .ing-name { color: var(--muted); }
+.toggle { display: flex; align-items: center; gap: 12px; min-height: 44px; font-weight: 600; }
+.method summary { display: flex; align-items: center; min-height: 44px; font-weight: 600; color: var(--c); cursor: pointer; }
+.method ol { margin: 2px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.sheet .card { margin: 0; box-shadow: none; border: 1px solid var(--line); background: var(--bg); }
+.row-main.pad { padding-left: 14px; }
+.row-main > svg { width: 18px; height: 18px; flex: none; color: var(--muted); }
+.flat .row + .row::before { left: 14px; }
 
 .setting h3 { margin: 0 0 4px; font-size: 15px; }
 .hint { margin: 0; font-size: 14px; color: var(--muted); }

@@ -3,7 +3,7 @@
 /* Pocket – a small personal assistant: shopping list, to-dos, appointments.
    Everything is stored in localStorage on this device. */
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 const KEY = 'pocket.v1';
 const TAB_KEY = 'pocket.tab';
 const LOCALE = 'en-GB'; // English text, day-month dates, 24h clock
@@ -41,11 +41,12 @@ const byWhen = (a, b) => (a.date + (a.time || '')).localeCompare(b.date + (b.tim
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
 /* ===================== storage ===================== */
-const blank = () => ({ version: 1, shopping: [], todos: [], appts: [], history: [] });
+const blank = () => ({ version: 1, shopping: [], todos: [], appts: [], history: [], recipes: [], prefs: {} });
 
 function normalize(d) {
   const out = blank();
-  for (const k of ['shopping', 'todos', 'appts']) {
+  if (d.prefs && typeof d.prefs === 'object') out.prefs = { ...d.prefs };
+  for (const k of ['shopping', 'todos', 'appts', 'recipes']) {
     if (Array.isArray(d[k])) {
       out[k] = d[k].filter(x => x && typeof x === 'object').map(x => ({ ...x, id: String(x.id || uid()) }));
     }
@@ -83,6 +84,120 @@ function remember(name) {
   db.history = [n, ...db.history.filter(h => h.toLowerCase() !== n.toLowerCase())].slice(0, 200);
 }
 
+/* ===================== recipes & ingredients ===================== */
+// Things most kitchens already have: shown in the list but unticked by default.
+const PANTRY = /^(salt|pepper|black pepper|salt and pepper|olive oil|oil|vegetable oil|sunflower oil|water|sugar)$/i;
+const METRIC = ['g', 'kg', 'ml', 'l', 'dl', 'cl'];
+// Units you buy whole – never ask for half a can.
+const WHOLE_UNITS = ['can', 'tin', 'jar', 'pack', 'bottle', 'head', 'ball', 'sheet', 'bunch', 'pinch', 'clove', 'stick', 'slice'];
+const UNIT_RE = 'kg|g|ml|dl|cl|l|tbsp|tsp|cans?|tins?|jars?|cloves?|bunch(?:es)?|pinch(?:es)?|slices?|sheets?|sprigs?|heads?|balls?|sticks?|packs?|bottles?|cups?';
+const NUM_RE = '\\d+(?:[.,]\\d+)?|\\d*[½¼¾]|\\d+\\/\\d+';
+const ING_RE = new RegExp(`^(?:(${NUM_RE})\\s*(?:(${UNIT_RE})\\.?(?=\\s|$))?\\s*)?(.+)$`, 'i');
+const QTY_RE = new RegExp(`^(${NUM_RE})\\s*(${UNIT_RE})?$`, 'i');
+
+function parseNum(s) {
+  if (!s) return null;
+  const frac = { '½': 0.5, '¼': 0.25, '¾': 0.75 };
+  const m = s.match(/^(\d*)([½¼¾])$/);
+  if (m) return (m[1] ? Number(m[1]) : 0) + frac[m[2]];
+  if (s.includes('/')) { const [a, b] = s.split('/').map(Number); return b ? a / b : null; }
+  return parseFloat(s.replace(',', '.'));
+}
+const singularUnit = u => (u || '').toLowerCase()
+  .replace(/^(bunch|pinch)es$/, '$1')
+  .replace(/^(can|tin|jar|clove|slice|sheet|sprig|head|ball|stick|pack|bottle|cup)s$/, '$1');
+const pluralUnit = (u, n) => (n <= 1 || METRIC.includes(u) || /^(tbsp|tsp)$/.test(u)) ? u : /^(bunch|pinch)$/.test(u) ? u + 'es' : u + 's';
+
+function parseIngredient(line) {
+  const m = String(line).trim().match(ING_RE);
+  if (!m) return { n: null, unit: '', name: String(line).trim() };
+  return { n: parseNum(m[1]), unit: singularUnit(m[2]), name: m[3].trim() };
+}
+
+function roundAmount(n, unit, wholeItems = false) {
+  if (['kg', 'l', 'dl', 'cl'].includes(unit)) ({ n, unit } = toBase(n, unit)); // 0.25 kg reads better as 250 g
+  if (unit === 'g' || unit === 'ml') {
+    if (n >= 1000) return { n: Math.round(n / 100) / 10, unit: unit === 'g' ? 'kg' : 'l' };
+    return { n: n >= 100 ? Math.round(n / 10) * 10 : Math.max(5, Math.round(n / 5) * 5), unit };
+  }
+  if (WHOLE_UNITS.includes(unit) || (!unit && wholeItems)) return { n: Math.max(1, Math.ceil(n - 0.01)), unit };
+  if (unit) return { n: Math.max(0.25, Math.round(n * 4) / 4), unit };
+  // whole items (eggs, onions…): halves below 2, then whole numbers
+  return { n: n < 2 ? Math.max(0.5, Math.ceil(n * 2 - 0.01) / 2) : Math.ceil(n - 0.01), unit };
+}
+function fmtNumber(n) {
+  const w = Math.floor(n), f = Math.round((n - w) * 100) / 100;
+  if (!f) return String(w);
+  const ch = { 0.25: '¼', 0.5: '½', 0.75: '¾' }[f];
+  return ch ? (w || '') + ch : String(Math.round(n * 10) / 10);
+}
+function amountText({ n, unit }, compact = false) {
+  if (n == null) return '';
+  if (METRIC.includes(unit)) { const num = String(Math.round(n * 10) / 10); return compact ? num + unit : `${num} ${unit}`; }
+  const num = fmtNumber(n);
+  if (!unit) return num;
+  return `${num} ${pluralUnit(unit, n)}`;
+}
+
+function scaledIngredients(r, servings) {
+  const f = servings / (r.serves || 1);
+  return (r.ingredients || []).map(line => {
+    const p = parseIngredient(line);
+    const amt = p.n == null ? null : roundAmount(p.n * f, p.unit, /\beggs?\b/i.test(p.name)); // no half eggs
+    return { name: p.name, n: amt ? amt.n : null, unit: amt ? amt.unit : '', text: amt ? amountText(amt) : '', pantry: PANTRY.test(p.name) };
+  });
+}
+
+const allRecipes = () => [...db.recipes.map(r => ({ ...r, mine: true })), ...BUILTIN_RECIPES];
+const recipeById = id => allRecipes().find(r => r.id === id);
+const recipeData = r => ({ id: r.id, name: r.name, serves: r.serves, time: r.time, veg: !!r.veg, ingredients: [...r.ingredients], steps: [...(r.steps || [])], mine: !!r.mine });
+const matchesFilter = (r, f) => (f === 'veg' ? r.veg : f === 'quick' ? r.time <= 30 : true);
+
+function suggestRecipe(filter, seen) {
+  const all = allRecipes().filter(r => matchesFilter(r, filter));
+  // Avoid what was cooked (or is planned) within three weeks either side of today.
+  const t = todayISO(), from = addDays(t, -21), to = addDays(t, 21);
+  const recent = new Set(db.appts.filter(a => a.recipe && a.date >= from && a.date <= to).map(a => a.recipe.id));
+  let pool = all.filter(r => !seen.has(r.id) && !recent.has(r.id));
+  if (!pool.length) pool = all.filter(r => !seen.has(r.id));
+  if (!pool.length) { seen.clear(); pool = all; }
+  return pool[Math.floor(Math.random() * pool.length)] || null;
+}
+
+// Grams and kilos (or ml and litres) can be added together.
+function toBase(n, unit) {
+  const f = { kg: ['g', 1000], l: ['ml', 1000], dl: ['ml', 100], cl: ['ml', 10] }[unit];
+  return f ? { n: n * f[1], unit: f[0] } : { n, unit };
+}
+function mergeQty(oldQty, ing) {
+  const add = ing.n == null ? '' : amountText(ing, true);
+  if (!oldQty) return add;
+  if (!add) return oldQty;
+  const m = String(oldQty).trim().match(QTY_RE);
+  if (m) {
+    const a = toBase(parseNum(m[1]), singularUnit(m[2])), b = toBase(ing.n, ing.unit);
+    if (a.unit === b.unit) return amountText(roundAmount(a.n + b.n, a.unit), true);
+  }
+  return `${oldQty} + ${add}`;
+}
+
+function addToShopping(items, label) {
+  for (const ing of items) {
+    const idx = db.shopping.findIndex(x => x.name.toLowerCase() === ing.name.toLowerCase());
+    const ex = db.shopping[idx];
+    if (ex && !ex.done) {
+      ex.qty = mergeQty(ex.qty, ing);
+      const notes = (ex.note || '').split(', ').filter(Boolean);
+      if (!notes.includes(label)) ex.note = [...notes, label].join(', ');
+    } else {
+      if (ex) db.shopping.splice(idx, 1);
+      db.shopping.push({ id: ex ? ex.id : uid(), name: ing.name, qty: ing.n == null ? '' : amountText(ing, true), note: label, done: false, doneAt: null, created: Date.now() });
+    }
+    remember(ing.name);
+  }
+  return items.length;
+}
+
 // Other tabs/windows of the app stay in sync.
 window.addEventListener('storage', e => { if (e.key === KEY) { db = load(); render(); } });
 
@@ -118,6 +233,7 @@ const ICON = {
   bag: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 8h14l-1.2 11.2a1.5 1.5 0 0 1-1.5 1.3H7.7a1.5 1.5 0 0 1-1.5-1.3L5 8z"/><path d="M9 10V7a3 3 0 0 1 6 0v3"/></svg>',
   list: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M10 6.5h10M10 12h10M10 17.5h10"/><path d="M3.5 6.5l1.6 1.6 2.6-2.8M3.5 12l1.6 1.6 2.6-2.8M3.5 17.5l1.6 1.6 2.6-2.8"/></svg>',
   cal: '<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  pot: '<svg class="cook-ico" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 10h16v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4v-6z"/><path d="M2 10h20M9 6.5c0-1 .8-1.5.8-2.5M14 6.5c0-1 .8-1.5.8-2.5"/></svg>',
 };
 
 function render() {
@@ -130,7 +246,7 @@ function render() {
     if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
   }
   $('#fab').hidden = !(tab === 'today' || tab === 'calendar');
-  $('#fab').setAttribute('aria-label', tab === 'calendar' ? 'New appointment' : 'Add something');
+  $('#fab').setAttribute('aria-label', 'Add something');
 
   setBadge('shopping', db.shopping.filter(x => !x.done).length);
   setBadge('todos', db.todos.filter(x => !x.done && x.due && x.due <= t).length);
@@ -160,9 +276,9 @@ function checkRow(kind, it, title, subHTML = '', extra = '') {
 
 function qtyLabel(q) {
   if (!q) return '';
-  return /^\d+([.,]\d+)?$/.test(q) ? '×' + q : q;
+  return /^(\d+([.,]\d+)?|\d*[½¼¾])$/.test(q) ? '×' + q : q;
 }
-const shopRow = it => checkRow('shopping', it, it.name, '', it.qty ? `<span class="qty">${esc(qtyLabel(it.qty))}</span>` : '');
+const shopRow = it => checkRow('shopping', it, it.name, it.note ? 'for ' + esc(it.note) : '', it.qty ? `<span class="qty">${esc(qtyLabel(it.qty))}</span>` : '');
 
 function todoRow(it, { showDue = true } = {}) {
   const t = todayISO();
@@ -178,10 +294,11 @@ function apptRow(a, past = false) {
   const time = a.time
     ? `<span class="appt-time">${esc(fmtTime(a.time))}${a.end ? `<small>${esc(fmtTime(a.end))}</small>` : ''}</span>`
     : '<span class="appt-time allday">All day</span>';
-  const sub = [a.location, (a.notes || '').split('\n')[0]].filter(Boolean).join(' · ');
-  return `<li class="appt${past ? ' past' : ''}" data-kind="appts" data-id="${esc(a.id)}">
+  const cook = a.recipe ? `Cooking · ${plural(a.recipe.servings, 'serving')}` : '';
+  const sub = [cook, a.location, (a.notes || '').split('\n')[0]].filter(Boolean).join(' · ');
+  return `<li class="appt${past ? ' past' : ''}${a.recipe ? ' cook' : ''}" data-kind="appts" data-id="${esc(a.id)}">
     <button type="button" class="appt-btn" data-act="edit">${time}
-      <span class="appt-body"><span class="row-title">${esc(a.title)}</span>${sub ? `<span class="row-sub">${esc(sub)}</span>` : ''}</span>
+      <span class="appt-body"><span class="row-title">${a.recipe ? ICON.pot : ''}${esc(a.title)}</span>${sub ? `<span class="row-sub">${esc(sub)}</span>` : ''}</span>
     </button></li>`;
 }
 
@@ -350,7 +467,7 @@ const sheet = $('#sheet');
 let sheetHandlers = {};
 
 function field(label, name, value = '', { type = 'text', required = false, placeholder = '', autofocus = false, textarea = false } = {}) {
-  const attrs = `name="${name}"${required ? ' required' : ''}${autofocus ? ' autofocus' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}`;
+  const attrs = `name="${name}"${required ? ' required' : ''}${autofocus ? ' autofocus' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${type === 'number' ? ' min="1" max="999" inputmode="numeric"' : ''}`;
   const control = textarea
     ? `<textarea ${attrs} rows="3">${esc(value)}</textarea>`
     : `<input type="${type}" ${attrs} value="${esc(value)}"${type === 'text' ? ' autocomplete="off"' : ''}>`;
@@ -490,18 +607,193 @@ function editAppt(id, presetDate) {
   for (const el of [form.elements.time, form.elements.end]) el.addEventListener('input', () => form.elements.end.setCustomValidity(''));
 }
 
+/* ---------- cooking session ---------- */
+const COOK_FILTERS = [['any', 'Any'], ['veg', 'Vegetarian'], ['quick', 'Quick ≤ 30 min']];
+
+function editCook(id, presetDate) {
+  const a = id ? find('appts', id) : null;
+  if (id && !(a && a.recipe)) return;
+  const added = !!(a && a.recipe.added);
+  const st = {
+    filter: 'any', seen: new Set(), servings: a ? a.recipe.servings : (db.prefs.servings || 2),
+    recipe: null, source: a ? 'saved' : 'suggest', skip: null, addToList: !added, methodOpen: false,
+  };
+  st.recipe = a ? (recipeById(a.recipe.id) || a.recipe.data) : suggestRecipe('any', st.seen);
+  if (st.recipe) st.seen.add(st.recipe.id);
+
+  openSheet({
+    title: a ? 'Cooking session' : 'Plan cooking',
+    save: a ? 'Save' : 'Schedule',
+    cls: 'c-cook',
+    body: `<div id="cook-pick"></div>
+      <div class="two">${field('Date', 'date', a ? a.date : (presetDate || todayISO()), { type: 'date', required: true })}${field('Time', 'time', a ? a.time : '18:30', { type: 'time' })}</div>
+      <div id="cook-ings" class="sheet-body-inner"></div>
+      ${field('Notes', 'notes', a && a.notes, { textarea: true, placeholder: 'Optional, e.g. guests coming' })}`,
+    actions: a ? '<button type="button" class="btn" data-sheet="ics">Add to phone calendar</button>' : '',
+    handlers: {
+      suggest: () => pick(suggestRecipe(st.filter, st.seen), 'suggest'),
+      filter: b => {
+        st.filter = b.dataset.filter;
+        if (st.recipe && matchesFilter(st.recipe, st.filter)) draw();
+        else pick(suggestRecipe(st.filter, st.seen), 'suggest');
+      },
+      serv: b => {
+        keepUi();
+        st.servings = Math.min(20, Math.max(1, st.servings + Number(b.dataset.d)));
+        drawIngredients();
+      },
+      ics: () => exportICS(find('appts', id)),
+    },
+    onSave: fd => {
+      const r = st.recipe;
+      const date = fd.get('date');
+      if (!r || !date) return false;
+      const snapshot = JSON.stringify(db);
+      const data = {
+        title: r.name, date, time: fd.get('time') || '', end: '', location: '', notes: fd.get('notes').trim(),
+        recipe: { id: r.id, servings: st.servings, added, data: recipeData(r) },
+      };
+      let n = 0;
+      if (fd.get('addToList')) {
+        const ticked = new Set(fd.getAll('ing').map(Number));
+        n = addToShopping(scaledIngredients(r, st.servings).filter((x, i) => ticked.has(i)), r.name);
+        data.recipe.added = data.recipe.added || n > 0;
+      }
+      if (a) Object.assign(find('appts', id) || {}, data);
+      else db.appts.push({ id: uid(), ...data, created: Date.now() });
+      db.prefs.servings = st.servings;
+      commit();
+      const dl = dayLabel(date);
+      const what = a ? 'Saved' : `Cooking ${/^(Today|Tomorrow)$/.test(dl) ? dl.toLowerCase() : 'on ' + dl}`;
+      toast(n ? `${what} · ${plural(n, 'item')} added to shopping` : what, () => { db = normalize(JSON.parse(snapshot)); commit(); });
+    },
+    onDelete: a && (() => removeWithUndo('appts', id, `Deleted “${a.title}”`)),
+  });
+  draw();
+
+  function pick(r, source) {
+    st.recipe = r;
+    st.source = source;
+    st.skip = null; // new recipe: default ticks again
+    if (r) st.seen.add(r.id);
+    draw();
+  }
+  function keepUi() {
+    const boxes = $$('[name=ing]', sheet);
+    if (boxes.length) st.skip = new Set(boxes.filter(b => !b.checked).map(b => Number(b.value)));
+    const add = $('[name=addToList]', sheet);
+    if (add) st.addToList = add.checked;
+    const det = $('details.method', sheet);
+    if (det) st.methodOpen = det.open;
+  }
+  function draw() { drawPick(); drawIngredients(); }
+
+  function drawPick() {
+    const r = st.recipe;
+    const opts = list => list.map(x => `<option value="${esc(x.id)}"${r && x.id === r.id ? ' selected' : ''}>${esc(x.name)}</option>`).join('');
+    $('#cook-pick', sheet).innerHTML = `<div class="recipe-card">
+      <div class="chip-row" role="group" aria-label="Kind of recipe">${COOK_FILTERS.map(([k, l]) =>
+        `<button type="button" class="chip-btn" data-sheet="filter" data-filter="${k}" aria-pressed="${st.filter === k}">${l}</button>`).join('')}</div>
+      ${r ? `<div><p class="recipe-kicker">${st.source === 'suggest' ? 'Suggestion' : 'Recipe'}</p>
+          <h3 class="recipe-name">${esc(r.name)}</h3>
+          <p class="hint">${r.time} min${r.veg ? ' · Vegetarian' : ''}${r.mine ? ' · My recipe' : ''}</p></div>`
+        : '<p class="hint">No recipes match this filter.</p>'}
+      <div class="recipe-actions">
+        <button type="button" class="btn" data-sheet="suggest">↻ Suggest another</button>
+        <label class="select-wrap"><span class="sr-only">Choose a recipe</span>
+          <select name="pick"><option value="">Choose…</option>${db.recipes.length ? `<optgroup label="My recipes">${opts(db.recipes)}</optgroup>` : ''}<optgroup label="Recipes">${opts(BUILTIN_RECIPES)}</optgroup></select>
+        </label>
+      </div>
+    </div>`;
+    $('[name=pick]', sheet).addEventListener('change', e => { const x = recipeById(e.target.value); if (x) pick(x, 'pick'); });
+  }
+
+  function drawIngredients() {
+    const r = st.recipe, box = $('#cook-ings', sheet);
+    if (!r) { box.innerHTML = ''; return; }
+    const onList = new Set(db.shopping.filter(x => !x.done).map(x => x.name.toLowerCase()));
+    const ings = scaledIngredients(r, st.servings);
+    box.innerHTML = `
+      <div class="field"><span>Servings</span>
+        <div class="stepper">
+          <button type="button" data-sheet="serv" data-d="-1" aria-label="Fewer servings">−</button>
+          <output aria-live="polite">${st.servings}</output>
+          <button type="button" data-sheet="serv" data-d="1" aria-label="More servings">+</button>
+        </div>
+      </div>
+      <fieldset class="ings"><legend>Ingredients · tick what you need to buy</legend>
+        ${ings.map((g, i) => {
+          const on = st.skip ? !st.skip.has(i) : !g.pantry;
+          return `<label class="ing"><input type="checkbox" name="ing" value="${i}"${on ? ' checked' : ''}>
+            <span class="ing-name">${esc(g.name)}${onList.has(g.name.toLowerCase()) ? '<small>on list</small>' : ''}</span>
+            <span class="ing-amt">${esc(g.text)}</span></label>`;
+        }).join('')}
+      </fieldset>
+      <label class="toggle"><input type="checkbox" name="addToList"${st.addToList ? ' checked' : ''}>
+        <span>${added ? 'Add ticked items to the shopping list again' : 'Add ticked items to the shopping list'}</span></label>
+      ${r.steps && r.steps.length ? `<details class="method"${st.methodOpen ? ' open' : ''}><summary>Method · ${plural(r.steps.length, 'step')}</summary>
+        <ol>${r.steps.map(s => `<li>${esc(s)}</li>`).join('')}</ol></details>` : ''}`;
+  }
+}
+
+/* ---------- my recipes ---------- */
+function openMyRecipes() {
+  openSheet({
+    title: 'My recipes',
+    body: `<p class="hint">Your own recipes are suggested alongside the ${BUILTIN_RECIPES.length} built-in ones.</p>
+      ${db.recipes.length ? `<ul class="card list flat">${db.recipes.map(r => `<li class="row">
+        <button type="button" class="row-main pad" data-sheet="edit" data-id="${esc(r.id)}">
+          <span class="row-text"><span class="row-title">${esc(r.name)}</span>
+          <span class="row-sub">${r.time} min · serves ${r.serves}${r.veg ? ' · Vegetarian' : ''}</span></span>${ICON.chev}
+        </button></li>`).join('')}</ul>` : ''}
+      <button type="button" class="btn primary" data-sheet="new">New recipe</button>`,
+    cls: 'c-cook',
+    handlers: { edit: b => editRecipe(b.dataset.id), new: () => editRecipe(null) },
+  });
+}
+
+function editRecipe(id) {
+  const r = id ? db.recipes.find(x => x.id === id) : null;
+  if (id && !r) return;
+  openSheet({
+    title: r ? 'Edit recipe' : 'New recipe',
+    cls: 'c-cook',
+    body: field('Name', 'name', r && r.name, { required: true, autofocus: !r, placeholder: 'e.g. Grandma’s lasagne' }) +
+      `<div class="two">${field('Serves', 'serves', r ? r.serves : 4, { type: 'number', required: true })}${field('Minutes', 'time', r ? r.time : 30, { type: 'number', required: true })}</div>` +
+      `<label class="toggle"><input type="checkbox" name="veg"${r && r.veg ? ' checked' : ''}><span>Vegetarian</span></label>` +
+      field('Ingredients · one per line', 'ingredients', r ? r.ingredients.join('\n') : '', { textarea: true, required: true, placeholder: '400 g spaghetti\n2 cloves garlic\n1 onion\nsalt and pepper' }) +
+      field('Method · one step per line', 'steps', r ? (r.steps || []).join('\n') : '', { textarea: true }),
+    onSave: fd => {
+      const lines = s => String(s || '').split('\n').map(x => x.trim()).filter(Boolean);
+      const data = {
+        name: fd.get('name').trim(), serves: Math.max(1, Math.round(Number(fd.get('serves')) || 4)),
+        time: Math.max(1, Math.round(Number(fd.get('time')) || 30)), veg: !!fd.get('veg'),
+        ingredients: lines(fd.get('ingredients')), steps: lines(fd.get('steps')),
+      };
+      if (!data.name || !data.ingredients.length) return false;
+      if (r) Object.assign(r, data);
+      else db.recipes.push({ id: 'my-' + uid(), ...data, created: Date.now() });
+      commit();
+      setTimeout(openMyRecipes, 0);
+    },
+    onDelete: r && (() => removeWithUndo('recipes', id, `Deleted “${r.name}”`)),
+  });
+}
+
 function chooseNew() {
   openSheet({
     title: 'Add',
     body: `<div class="choose">
-      <button type="button" class="c-shop" data-sheet="shop"><span class="dot"></span>Shopping item</button>
-      <button type="button" class="c-todo" data-sheet="todo"><span class="dot"></span>To-do</button>
       <button type="button" class="c-cal" data-sheet="appt"><span class="dot"></span>Appointment</button>
+      <button type="button" class="c-cook" data-sheet="cook"><span class="dot"></span><span>Cooking session<small>Suggests a recipe, fills your shopping list</small></span></button>
+      <button type="button" class="c-todo" data-sheet="todo"><span class="dot"></span>To-do</button>
+      <button type="button" class="c-shop" data-sheet="shop"><span class="dot"></span>Shopping item</button>
     </div>`,
     handlers: {
       shop: () => { sheet.close(); setTab('shopping'); $('#shop-input').focus(); },
       todo: () => editTodo(null),
       appt: () => editAppt(null),
+      cook: () => editCook(null),
     },
   });
 }
@@ -528,6 +820,11 @@ async function openSettings() {
         <button type="button" class="btn" data-sheet="import">Restore from backup…</button>
       </section>
       <section class="setting">
+        <h3>Recipes</h3>
+        <p class="hint">${BUILTIN_RECIPES.length} built-in recipes${db.recipes.length ? ` and ${plural(db.recipes.length, 'recipe')} of your own` : ''}. Add your own to have them suggested too.</p>
+        <button type="button" class="btn" data-sheet="recipes">My recipes</button>
+      </section>
+      <section class="setting">
         <h3>Home screen</h3>
         <p class="hint">${esc(installHint)}</p>
         ${installEvent && !installed ? '<button type="button" class="btn primary" data-sheet="install">Install Pocket</button>' : ''}
@@ -537,6 +834,7 @@ async function openSettings() {
     handlers: {
       export: exportBackup,
       import: () => $('#import-file').click(),
+      recipes: openMyRecipes,
       install: () => { sheet.close(); promptInstall(); },
     },
   });
@@ -606,9 +904,12 @@ function exportICS(a) {
   } else {
     lines.push(`DTSTART;VALUE=DATE:${d}`, `DTEND;VALUE=DATE:${addDays(a.date, 1).replace(/-/g, '')}`);
   }
-  lines.push(`SUMMARY:${icsText(a.title)}`);
+  lines.push(`SUMMARY:${icsText(a.recipe ? 'Cook: ' + a.title : a.title)}`);
   if (a.location) lines.push(`LOCATION:${icsText(a.location)}`);
-  if (a.notes) lines.push(`DESCRIPTION:${icsText(a.notes)}`);
+  const desc = a.recipe
+    ? [`Ingredients for ${a.recipe.servings}:`, ...scaledIngredients(a.recipe.data, a.recipe.servings).map(g => `- ${g.text ? g.text + ' ' : ''}${g.name}`), a.notes].filter(Boolean).join('\n')
+    : a.notes;
+  if (desc) lines.push(`DESCRIPTION:${icsText(desc)}`);
   if (a.time) lines.push('BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${icsText(a.title)}`, 'TRIGGER:-PT30M', 'END:VALARM');
   lines.push('END:VEVENT', 'END:VCALENDAR');
   const safe = a.title.replace(/[^\w\- ]+/g, '').trim().slice(0, 40) || 'appointment';
@@ -654,7 +955,7 @@ document.addEventListener('click', e => {
     case 'edit':
       if (kind === 'shopping') editShopping(id);
       else if (kind === 'todos') editTodo(id);
-      else if (kind === 'appts') editAppt(id);
+      else if (kind === 'appts') (find('appts', id) && find('appts', id).recipe ? editCook : editAppt)(id);
       break;
     case 'goto': setTab(btn.dataset.tab); break;
     case 'install': promptInstall(); break;
@@ -681,7 +982,7 @@ document.addEventListener('click', e => {
 });
 
 for (const b of $$('.tabbar button')) b.addEventListener('click', () => setTab(b.dataset.tab));
-$('#fab').addEventListener('click', () => (tab === 'calendar' ? editAppt(null) : chooseNew()));
+$('#fab').addEventListener('click', chooseNew);
 $('#menu-btn').addEventListener('click', openSettings);
 
 $('#shop-add').addEventListener('submit', e => {
