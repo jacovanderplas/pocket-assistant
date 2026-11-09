@@ -3,7 +3,7 @@
 /* Pocket – a small personal assistant: shopping list, to-dos, appointments.
    Everything is stored in localStorage on this device. */
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 const KEY = 'pocket.v1';
 const TAB_KEY = 'pocket.tab';
 const LOCALE = 'en-GB'; // English text, day-month dates, 24h clock
@@ -196,6 +196,117 @@ function addToShopping(items, label) {
     remember(ing.name);
   }
   return items.length;
+}
+
+/* ===================== AI recipe suggestions (Claude API) ===================== */
+// The API key is kept in its own localStorage entry so it never ends up in an exported backup.
+const AI_KEY = 'pocket.ai';
+const SDK_URL = 'https://cdn.jsdelivr.net/npm/@anthropic-ai/sdk@1.3.0/+esm';
+const AI_MODELS = [
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', note: 'Best ideas · roughly 3–7 cents per suggestion' },
+  { id: 'claude-haiku-5-5', label: 'Claude Haiku 5.5', note: 'Fastest and cheapest · well under 1 cent' },
+];
+const AI_UNITS = ['', 'g', 'kg', 'ml', 'l', 'tbsp', 'tsp', 'can', 'jar', 'clove', 'bunch', 'pinch', 'slice', 'sheet', 'head', 'ball', 'stick', 'pack', 'bottle'];
+const RECIPE_SCHEMA = {
+  type: 'object',
+  properties: {
+    name: { type: 'string', description: 'Short dish name' },
+    why: { type: 'string', description: 'One short sentence on why this fits the request' },
+    time_minutes: { type: 'integer', description: 'Total time including prep' },
+    vegetarian: { type: 'boolean' },
+    ingredients: {
+      type: 'array',
+      items: {
+        type: 'object',
+        properties: {
+          amount: { type: 'number', description: 'Quantity for the requested servings; 0 for to-taste items such as salt and pepper' },
+          unit: { type: 'string', enum: AI_UNITS, description: 'Empty string for countable items (e.g. 2 onions) and to-taste items' },
+          name: { type: 'string', description: 'Ingredient as it would appear on a shopping list, lower case, e.g. "chopped tomatoes"' },
+        },
+        required: ['amount', 'unit', 'name'],
+        additionalProperties: false,
+      },
+    },
+    steps: { type: 'array', items: { type: 'string' }, description: '3 to 7 short method steps' },
+  },
+  required: ['name', 'why', 'time_minutes', 'vegetarian', 'ingredients', 'steps'],
+  additionalProperties: false,
+};
+const AI_SYSTEM = 'You suggest one home-cooking recipe for a personal planner app used in Switzerland. ' +
+  'Use ingredients that are easy to find in a Swiss supermarket, metric units and English. ' +
+  'Give amounts for exactly the requested number of servings. Keep the method short and practical. ' +
+  'Salt, pepper, cooking oil and water get amount 0 and no unit unless a specific amount matters.';
+
+function aiConfig() {
+  try { return { key: '', model: AI_MODELS[0].id, ...JSON.parse(localStorage.getItem(AI_KEY) || '{}') }; }
+  catch (e) { return { key: '', model: AI_MODELS[0].id }; }
+}
+function saveAiConfig(cfg) {
+  try { localStorage.setItem(AI_KEY, JSON.stringify(cfg)); return true; } catch (e) { return false; }
+}
+
+let sdkPromise = null;
+const loadSdk = () => (sdkPromise ||= import(SDK_URL).then(m => m.default).catch(e => { sdkPromise = null; throw e; }));
+
+async function askClaudeForRecipe({ servings, filter, wish, avoid, signal }) {
+  const cfg = aiConfig();
+  if (!cfg.key) throw new Error('Add your Anthropic API key under ⋯ → AI suggestions first.');
+  if (!navigator.onLine) throw new Error('AI suggestions need an internet connection.');
+  let Anthropic;
+  try { Anthropic = await loadSdk(); } catch (e) { throw new Error('Could not load the Claude library. Check your connection.'); }
+  const client = new Anthropic({ apiKey: cfg.key, dangerouslyAllowBrowser: true, timeout: 90_000, maxRetries: 1 });
+
+  const t = todayISO();
+  const recent = db.appts.filter(a => a.recipe && a.date >= addDays(t, -21) && a.date <= addDays(t, 21)).map(a => a.title);
+  const onList = db.shopping.filter(x => !x.done).map(x => x.name);
+  const lines = [
+    `Suggest one recipe for ${servings} ${servings === 1 ? 'person' : 'people'}.`,
+    filter === 'veg' ? 'It must be vegetarian.' : '',
+    filter === 'quick' ? 'It must take 30 minutes or less in total.' : '',
+    wish ? `What I'd like: ${wish}` : 'Surprise me with something varied and seasonal.',
+    recent.length ? `Recently cooked or planned (suggest something different): ${[...new Set(recent)].join(', ')}.` : '',
+    avoid.length ? `Already suggested just now (suggest something else): ${avoid.join(', ')}.` : '',
+    onList.length ? `Already on my shopping list (fine to use): ${onList.slice(0, 40).join(', ')}.` : '',
+  ].filter(Boolean).join('\n');
+
+  const params = {
+    model: cfg.model,
+    max_tokens: 16000,
+    system: AI_SYSTEM,
+    messages: [{ role: 'user', content: lines }],
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: RECIPE_SCHEMA } },
+  };
+  let res;
+  try {
+    // Opus can hand a declined request to a fallback model server-side; Haiku has no server-side fallback.
+    res = cfg.model === 'claude-opus-5-5'
+      ? await client.beta.messages.create({ ...params, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }, { signal })
+      : await client.messages.create(params, { signal });
+  } catch (e) {
+    if (e instanceof Anthropic.APIUserAbortError) throw e;
+    if (e instanceof Anthropic.AuthenticationError) throw new Error('Your API key was not accepted. Check it under ⋯ → AI suggestions.');
+    if (e instanceof Anthropic.PermissionDeniedError) throw new Error('This API key is not allowed to use that model.');
+    if (e instanceof Anthropic.RateLimitError) throw new Error('Too many requests or spending limit reached. Try again later.');
+    if (e instanceof Anthropic.BadRequestError) throw new Error('Claude could not handle the request: ' + (e.error?.error?.message || e.message));
+    if (e instanceof Anthropic.APIConnectionError) throw new Error('No connection to Claude. Check your internet.');
+    if (e instanceof Anthropic.APIError) throw new Error('Claude is not available right now (' + (e.status || 'error') + '). Try again shortly.');
+    throw e;
+  }
+  if (res.stop_reason === 'refusal') throw new Error('Claude declined this request. Try wording it differently.');
+  if (res.stop_reason === 'max_tokens') throw new Error('The answer was cut off. Try again.');
+  const text = res.content.filter(b => b.type === 'text').map(b => b.text).pop();
+  let out;
+  try { out = JSON.parse(text); } catch (e) { throw new Error('Got an unexpected answer from Claude. Try again.'); }
+
+  const fmt = n => String(Math.round(n * 100) / 100);
+  const ingredients = (out.ingredients || []).filter(g => g && g.name).map(g =>
+    g.amount > 0 ? `${fmt(g.amount)} ${g.unit ? g.unit + ' ' : ''}${g.name}`.trim() : g.name);
+  if (!out.name || !ingredients.length) throw new Error('Got an incomplete recipe from Claude. Try again.');
+  return {
+    id: 'ai-' + uid(), name: String(out.name).trim(), why: String(out.why || ''), serves: servings,
+    time: Math.max(1, Math.round(out.time_minutes || 30)), veg: !!out.vegetarian,
+    ingredients, steps: (out.steps || []).map(String).filter(Boolean), ai: true,
+  };
 }
 
 // Other tabs/windows of the app stay in sync.
@@ -465,6 +576,7 @@ function renderCalendar() {
 /* ===================== sheet (dialog) ===================== */
 const sheet = $('#sheet');
 let sheetHandlers = {};
+let sheetSeq = 0; // bumps every time the sheet gets new content, so late async results can tell
 
 function field(label, name, value = '', { type = 'text', required = false, placeholder = '', autofocus = false, textarea = false } = {}) {
   const attrs = `name="${name}"${required ? ' required' : ''}${autofocus ? ' autofocus' : ''}${placeholder ? ` placeholder="${esc(placeholder)}"` : ''}${type === 'number' ? ' min="1" max="999" inputmode="numeric"' : ''}`;
@@ -476,6 +588,7 @@ function field(label, name, value = '', { type = 'text', required = false, place
 
 function openSheet({ title, body, save = 'Save', onSave, onDelete, actions = '', handlers = {}, cls = '' }) {
   if (sheet.open) sheet.close();
+  sheetSeq++;
   sheet.className = 'sheet ' + cls;
   sheet.innerHTML = `<form>
     <header class="sheet-head">
@@ -617,6 +730,7 @@ function editCook(id, presetDate) {
   const st = {
     filter: 'any', seen: new Set(), servings: a ? a.recipe.servings : (db.prefs.servings || 2),
     recipe: null, source: a ? 'saved' : 'suggest', skip: null, addToList: !added, methodOpen: false,
+    wish: '', aiBusy: false, aiMsg: '', aiSaved: false, aiNames: [], abort: null,
   };
   st.recipe = a ? (recipeById(a.recipe.id) || a.recipe.data) : suggestRecipe('any', st.seen);
   if (st.recipe) st.seen.add(st.recipe.id);
@@ -643,6 +757,16 @@ function editCook(id, presetDate) {
         drawIngredients();
       },
       ics: () => exportICS(find('appts', id)),
+      ai: () => askAi(),
+      'save-ai': () => {
+        const r = st.recipe;
+        if (!r || !r.ai || st.aiSaved) return;
+        const { mine, ...rest } = recipeData(r);
+        db.recipes.push({ ...rest, id: 'my-' + uid(), created: Date.now() });
+        commit();
+        st.aiSaved = true;
+        drawPick();
+      },
     },
     onSave: fd => {
       const r = st.recipe;
@@ -669,14 +793,42 @@ function editCook(id, presetDate) {
     },
     onDelete: a && (() => removeWithUndo('appts', id, `Deleted “${a.title}”`)),
   });
+  const seq = sheetSeq;
+  sheet.addEventListener('close', () => { if (st.abort) st.abort.abort(); }, { once: true });
   draw();
 
   function pick(r, source) {
     st.recipe = r;
     st.source = source;
     st.skip = null; // new recipe: default ticks again
+    st.aiSaved = false;
     if (r) st.seen.add(r.id);
     draw();
+  }
+
+  async function askAi() {
+    if (st.aiBusy) return;
+    const input = $('[name=wish]', sheet);
+    st.wish = input ? input.value.trim() : st.wish;
+    st.aiBusy = true;
+    st.aiMsg = '';
+    st.abort = new AbortController();
+    drawPick();
+    try {
+      const r = await askClaudeForRecipe({ servings: st.servings, filter: st.filter, wish: st.wish, avoid: st.aiNames, signal: st.abort.signal });
+      if (sheetSeq !== seq || !sheet.open) return;
+      st.aiNames.push(r.name);
+      st.aiBusy = false;
+      keepUi();
+      pick(r, 'ai');
+    } catch (e) {
+      if (sheetSeq !== seq || !sheet.open) return;
+      st.aiBusy = false;
+      st.aiMsg = e.message || 'Something went wrong. Try again.';
+      drawPick();
+    } finally {
+      st.abort = null;
+    }
   }
   function keepUi() {
     const boxes = $$('[name=ing]', sheet);
@@ -694,10 +846,17 @@ function editCook(id, presetDate) {
     $('#cook-pick', sheet).innerHTML = `<div class="recipe-card">
       <div class="chip-row" role="group" aria-label="Kind of recipe">${COOK_FILTERS.map(([k, l]) =>
         `<button type="button" class="chip-btn" data-sheet="filter" data-filter="${k}" aria-pressed="${st.filter === k}">${l}</button>`).join('')}</div>
-      ${r ? `<div><p class="recipe-kicker">${st.source === 'suggest' ? 'Suggestion' : 'Recipe'}</p>
+      ${r ? `<div><p class="recipe-kicker">${st.source === 'ai' ? '✨ AI suggestion' : st.source === 'suggest' ? 'Suggestion' : 'Recipe'}</p>
           <h3 class="recipe-name">${esc(r.name)}</h3>
-          <p class="hint">${r.time} min${r.veg ? ' · Vegetarian' : ''}${r.mine ? ' · My recipe' : ''}</p></div>`
+          <p class="hint">${r.time} min${r.veg ? ' · Vegetarian' : ''}${r.mine ? ' · My recipe' : ''}</p>
+          ${st.source === 'ai' && r.why ? `<p class="ai-why">${esc(r.why)}</p>` : ''}
+          ${r.ai ? `<button type="button" class="link save-ai" data-sheet="save-ai"${st.aiSaved ? ' disabled' : ''}>${st.aiSaved ? '✓ Saved to My recipes' : '+ Save to My recipes'}</button>` : ''}</div>`
         : '<p class="hint">No recipes match this filter.</p>'}
+      <div class="ai-ask">
+        <input name="wish" value="${esc(st.wish)}" placeholder="What do you fancy?" autocomplete="off" enterkeyhint="go" aria-label="What would you like to cook?"${st.aiBusy ? ' disabled' : ''}>
+        <button type="button" class="btn ai-btn" data-sheet="ai"${st.aiBusy ? ' disabled aria-busy="true"' : ''}>${st.aiBusy ? '<span class="spinner" aria-hidden="true"></span>Thinking…' : '✨ Ask AI'}</button>
+      </div>
+      ${st.aiMsg ? `<p class="ai-msg" role="alert">${esc(st.aiMsg)}</p>` : ''}
       <div class="recipe-actions">
         <button type="button" class="btn" data-sheet="suggest">↻ Suggest another</button>
         <label class="select-wrap"><span class="sr-only">Choose a recipe</span>
@@ -706,6 +865,10 @@ function editCook(id, presetDate) {
       </div>
     </div>`;
     $('[name=pick]', sheet).addEventListener('change', e => { const x = recipeById(e.target.value); if (x) pick(x, 'pick'); });
+    const wish = $('[name=wish]', sheet);
+    wish.addEventListener('input', () => { st.wish = wish.value; });
+    // Enter in the wish box asks the AI instead of submitting (scheduling) the form.
+    wish.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); askAi(); } });
   }
 
   function drawIngredients() {
@@ -824,6 +987,7 @@ async function openSettings() {
         <p class="hint">${BUILTIN_RECIPES.length} built-in recipes${db.recipes.length ? ` and ${plural(db.recipes.length, 'recipe')} of your own` : ''}. Add your own to have them suggested too.</p>
         <button type="button" class="btn" data-sheet="recipes">My recipes</button>
       </section>
+      <section class="setting" id="ai-setting">${aiSettingHTML()}</section>
       <section class="setting">
         <h3>Home screen</h3>
         <p class="hint">${esc(installHint)}</p>
@@ -835,9 +999,41 @@ async function openSettings() {
       export: exportBackup,
       import: () => $('#import-file').click(),
       recipes: openMyRecipes,
+      'ai-save': () => {
+        const cfg = aiConfig();
+        const key = $('[name=aikey]', sheet).value.trim();
+        if (key) cfg.key = key;
+        cfg.model = ($('[name=aimodel]:checked', sheet) || {}).value || cfg.model;
+        const ok = saveAiConfig(cfg);
+        $('#ai-setting', sheet).innerHTML = aiSettingHTML(ok ? (key ? 'Saved. Try ✨ Ask AI when you plan cooking.' : 'Model saved.') : 'Could not save on this device.');
+      },
+      'ai-remove': () => {
+        const cfg = aiConfig();
+        cfg.key = '';
+        saveAiConfig(cfg);
+        $('#ai-setting', sheet).innerHTML = aiSettingHTML('API key removed from this device.');
+      },
       install: () => { sheet.close(); promptInstall(); },
     },
   });
+}
+
+function aiSettingHTML(msg = '') {
+  const cfg = aiConfig();
+  return `<h3>AI suggestions</h3>
+    <p class="hint">Let Claude suggest recipes when you plan cooking. Uses your own Anthropic API key (from console.anthropic.com, billed per use).
+      The key stays on this device and is not included in backups. When you ask, the recipe request, your recent dishes and shopping-list item names are sent to Anthropic.</p>
+    <div class="ai-form">
+      <label class="field"><span>${cfg.key ? `API key · saved (…${esc(cfg.key.slice(-4))})` : 'API key'}</span>
+        <input type="password" name="aikey" autocomplete="off" spellcheck="false" placeholder="${cfg.key ? 'Paste a new key to replace it' : 'sk-ant-…'}"></label>
+      <fieldset class="ai-models"><legend>Model</legend>
+        ${AI_MODELS.map(m => `<label class="toggle"><input type="radio" name="aimodel" value="${m.id}"${cfg.model === m.id ? ' checked' : ''}>
+          <span>${m.label}<small>${m.note}</small></span></label>`).join('')}
+      </fieldset>
+      <button type="button" class="btn" data-sheet="ai-save">Save</button>
+      ${cfg.key ? '<button type="button" class="btn danger" data-sheet="ai-remove">Remove key</button>' : ''}
+      ${msg ? `<p class="hint ai-msg" role="status">${esc(msg)}</p>` : ''}
+    </div>`;
 }
 
 function download(filename, text, type) {

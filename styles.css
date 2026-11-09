@@ -233,7 +233,7 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
 .sheet-head .link { padding: 10px; min-height: 44px; }
 .sheet-head > :first-child { justify-self: start; font-weight: 500; }
 .sheet-head > :last-child { justify-self: end; }
-.sheet-body { padding: 16px; display: grid; gap: 14px; }
+.sheet-body { padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .sheet-actions { padding: 2px 16px 18px; display: grid; gap: 8px; }
 
 .field { display: grid; gap: 6px; min-width: 0; }
@@ -245,7 +245,7 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
 .field input[type="date"], .field input[type="time"] { display: block; -webkit-appearance: none; appearance: none; text-align: left; }
 .field input:focus, .field textarea:focus { outline: 2px solid var(--c); outline-offset: -1px; border-color: transparent; }
 .field textarea { min-height: 86px; resize: vertical; }
-.two { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip-btn { border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; font-size: 14px; min-height: 36px; }
 .chip-btn[aria-pressed="true"] { background: var(--c); border-color: var(--c); color: var(--on-accent); }
@@ -266,13 +266,14 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
 /* ---------- cooking ---------- */
 .sheet-body-inner { display: grid; gap: 14px; }
 .sheet-body-inner:empty { display: none; }
-.recipe-card { display: grid; gap: 12px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--c) 9%, var(--bg)); }
+.recipe-card { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; padding: 14px; border-radius: 14px; background: color-mix(in srgb, var(--c) 9%, var(--bg)); }
 .recipe-kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--c); }
 .recipe-name { margin: 2px 0 2px; font-size: 22px; line-height: 1.2; letter-spacing: -.01em; }
-.recipe-actions { display: grid; gap: 8px; }
+.recipe-actions { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.select-wrap { display: block; min-width: 0; }
 .recipe-actions .btn { background: var(--surface); border: 1px solid var(--line); }
 .select-wrap select {
-  width: 100%; min-height: 48px; padding: 0 12px; border-radius: 12px;
+  width: 100%; min-width: 0; max-width: 100%; text-overflow: ellipsis; min-height: 48px; padding: 0 12px; border-radius: 12px;
   border: 1px solid var(--line); background: var(--surface); color: var(--text); font: inherit; font-weight: 600;
 }
 .stepper { display: inline-flex; align-items: center; width: max-content; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); }
@@ -291,6 +292,26 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
 .toggle { display: flex; align-items: center; gap: 12px; min-height: 44px; font-weight: 600; }
 .method summary { display: flex; align-items: center; min-height: 44px; font-weight: 600; color: var(--c); cursor: pointer; }
 .method ol { margin: 2px 0 0; padding-left: 22px; display: grid; gap: 8px; }
+.ai-ask { display: flex; gap: 8px; }
+.ai-ask input {
+  flex: 1; min-width: 0; min-height: 48px; padding: 0 12px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text);
+}
+.ai-ask input:focus { outline: 2px solid var(--c); outline-offset: -1px; border-color: transparent; }
+.ai-btn { width: auto; flex: none; background: var(--c); color: var(--on-accent); display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.ai-btn:disabled { opacity: .75; cursor: progress; }
+.spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.ai-msg { margin: -4px 2px 0; font-size: 14px; color: var(--danger); }
+.hint.ai-msg { color: var(--c); margin-top: 8px; }
+.ai-why { margin: 4px 0 0; font-size: 14.5px; font-style: italic; color: var(--text); }
+.save-ai { padding: 6px 0 0; min-height: 36px; font-size: 15px; }
+.save-ai:disabled { color: var(--muted); cursor: default; }
+.ai-form { display: grid; gap: 10px; margin-top: 12px; }
+.ai-form .btn + .btn { margin-top: 0; }
+.ai-models { margin: 0; padding: 4px 12px 6px; border: 1px solid var(--line); border-radius: 12px; }
+.ai-models legend { padding: 0 6px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.toggle small { display: block; font-weight: 400; font-size: 13px; color: var(--muted); }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .sheet .card { margin: 0; box-shadow: none; border: 1px solid var(--line); background: var(--bg); }
 .row-main.pad { padding-left: 14px; }
