@@ -23,9 +23,14 @@
         <p class="eyebrow" id="eyebrow"></p>
         <h1 id="title">Today</h1>
       </div>
-      <button class="icon-btn" id="menu-btn" type="button" aria-label="Settings and backup">
-        <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>
-      </button>
+      <div class="top-actions">
+        <button class="icon-btn voice-btn" id="voice-btn" type="button" aria-label="Speak a command" data-voice hidden>
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+        </button>
+        <button class="icon-btn" id="menu-btn" type="button" aria-label="Settings and backup">
+          <svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>
+        </button>
+      </div>
     </header>
 
     <main>
@@ -34,6 +39,9 @@
       <section class="view" data-view="shopping" hidden>
         <form class="quick-add" id="shop-add" autocomplete="off">
           <input id="shop-input" name="item" list="shop-history" placeholder="Add item, e.g. “2 milk”" enterkeyhint="done" aria-label="New shopping item">
+          <button type="button" class="mic-btn" data-mic="shop" data-voice hidden aria-label="Say items to add" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+          </button>
           <button type="submit">Add</button>
         </form>
         <datalist id="shop-history"></datalist>
@@ -43,6 +51,9 @@
       <section class="view" data-view="todos" hidden>
         <form class="quick-add" id="todo-add" autocomplete="off">
           <input id="todo-input" name="todo" placeholder="Add a to-do…" enterkeyhint="done" aria-label="New to-do">
+          <button type="button" class="mic-btn" data-mic="todo" data-voice hidden aria-label="Say a to-do" aria-pressed="false">
+            <svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M8.5 21h7"/></svg>
+          </button>
           <button type="submit">Add</button>
         </form>
         <div id="todo-list"></div>
@@ -85,5 +96,6 @@
 
   <script src="recipes.js"></script>
   <script src="app.js"></script>
+  <script src="voice.js"></script>
 </body>
 </html>

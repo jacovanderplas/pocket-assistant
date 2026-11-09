@@ -324,6 +324,46 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
 .setting .hint + .btn { margin-top: 12px; }
 .stats { font-size: 13px; color: var(--muted); text-align: center; margin: 4px 0 0; }
 
+/* ---------- voice ---------- */
+.top-actions { display: flex; align-items: center; gap: 2px; margin-right: -8px; }
+.quick-add .mic-btn {
+  width: 50px; padding: 0; flex: none; display: grid; place-items: center;
+  background: var(--surface); color: var(--c); border: 1px solid var(--line); box-shadow: var(--shadow);
+}
+.mic-btn svg { width: 24px; height: 24px; }
+.quick-add .mic-btn.listening, .voice-btn:active { background: var(--c); color: var(--on-accent); border-color: var(--c); }
+.mic-btn.listening, .voice-mic.listening { animation: mic-pulse 1.3s ease-out infinite; }
+@keyframes mic-pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--c) 45%, transparent); }
+  100% { box-shadow: 0 0 0 16px color-mix(in srgb, var(--c) 0%, transparent); }
+}
+.voice { display: grid; gap: 14px; justify-items: center; text-align: center; min-width: 0; }
+.voice > * { max-width: 100%; }
+.voice-mic {
+  width: 84px; height: 84px; border-radius: 50%; display: grid; place-items: center; margin-top: 8px;
+  background: var(--c); color: var(--on-accent);
+}
+.voice-mic svg { width: 38px; height: 38px; }
+.voice-mic:not(.listening) { opacity: .55; }
+.voice-text { margin: 0; min-height: 2.8em; font-size: 20px; font-weight: 600; overflow-wrap: anywhere; }
+.voice-text .muted { color: var(--muted); font-weight: 500; }
+.voice-examples { width: 100%; padding: 12px 14px; border-radius: 12px; background: var(--bg); text-align: left; }
+.voice-examples p { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.voice-examples ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; font-size: 15px; }
+.voice-heard { margin: 4px 0 0; font-size: 18px; font-style: italic; overflow-wrap: anywhere; }
+.voice-result { width: 100%; padding: 12px 14px; border-radius: 12px; background: color-mix(in srgb, var(--c) 10%, var(--bg)); text-align: left; }
+.voice-result h3 { margin: 0 0 6px; font-size: 13px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--c); }
+.voice-result ul { margin: 0; padding: 0; list-style: none; display: grid; gap: 6px; }
+.voice-result li { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-weight: 600; overflow-wrap: anywhere; }
+.voice-result .hint { margin-top: 8px; }
+.voice-q { margin: 0; font-weight: 600; }
+.voice .choose { width: 100%; text-align: left; }
+.voice-err { margin: 8px 0 0; color: var(--danger); }
+.voice-actions { width: 100%; display: grid; gap: 8px; }
+.voice-again { display: inline-flex; align-items: center; justify-content: center; gap: 8px; color: var(--c); }
+.voice-again svg { width: 20px; height: 20px; }
+.voice-lang { margin-top: 12px; }
+
 /* ---------- toast ---------- */
 .toast {
   position: fixed; z-index: 20; left: 50%;

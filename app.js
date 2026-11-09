@@ -3,7 +3,7 @@
 /* Pocket – a small personal assistant: shopping list, to-dos, appointments.
    Everything is stored in localStorage on this device. */
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const KEY = 'pocket.v1';
 const TAB_KEY = 'pocket.tab';
 const LOCALE = 'en-GB'; // English text, day-month dates, 24h clock
@@ -682,16 +682,16 @@ function editTodo(id) {
   }
 }
 
-function editAppt(id, presetDate) {
+function editAppt(id, presetDate, preset = {}) {
   const a = id ? find('appts', id) : null;
   if (id && !a) return;
   openSheet({
     title: a ? 'Appointment' : 'New appointment',
     save: a ? 'Save' : 'Add',
     cls: 'c-cal',
-    body: field('Title', 'title', a?.title, { required: true, autofocus: !a, placeholder: 'e.g. Dentist' }) +
+    body: field('Title', 'title', a ? a.title : preset.title, { required: true, autofocus: !a && !preset.title, placeholder: 'e.g. Dentist' }) +
       field('Date', 'date', a?.date || presetDate || todayISO(), { type: 'date', required: true }) +
-      `<div class="two">${field('Starts', 'time', a?.time, { type: 'time' })}${field('Ends', 'end', a?.end, { type: 'time' })}</div>` +
+      `<div class="two">${field('Starts', 'time', a ? a.time : preset.time, { type: 'time' })}${field('Ends', 'end', a ? a.end : preset.end, { type: 'time' })}</div>` +
       field('Location', 'location', a?.location, { placeholder: 'Optional' }) +
       field('Notes', 'notes', a?.notes, { textarea: true }),
     actions: a ? '<button type="button" class="btn" data-sheet="ics">Add to phone calendar</button>' : '',
@@ -988,6 +988,7 @@ async function openSettings() {
         <button type="button" class="btn" data-sheet="recipes">My recipes</button>
       </section>
       <section class="setting" id="ai-setting">${aiSettingHTML()}</section>
+      <section class="setting" id="voice-setting">${typeof voiceSettingHTML === 'function' ? voiceSettingHTML() : ''}</section>
       <section class="setting">
         <h3>Home screen</h3>
         <p class="hint">${esc(installHint)}</p>
